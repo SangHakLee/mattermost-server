@@ -1706,11 +1706,28 @@ func testGetGroupsByTeam(t *testing.T, ss store.Store) {
 	})
 	require.Nil(t, res.Err)
 
+	// add members
+	u1 := &model.User{
+		Email:    MakeEmail(),
+		Username: model.NewId(),
+	}
+	res = <-ss.User().Save(u1)
+	require.Nil(t, res.Err)
+	user1 := res.Data.(*model.User)
+	<-ss.Group().CreateOrRestoreMember(group1.Id, user1.Id)
+
+	group1WithMemberCount := model.Group(*group1)
+	group1WithMemberCount.MemberCount = model.NewInt(1)
+
+	group2WithMemberCount := model.Group(*group2)
+	group2WithMemberCount.MemberCount = model.NewInt(0)
+
 	testCases := []struct {
 		Name    string
 		TeamId  string
 		Page    int
 		PerPage int
+		Opts    model.GroupSearchOpts
 		Result  []*model.Group
 	}{
 		{
@@ -1748,13 +1765,46 @@ func testGetGroupsByTeam(t *testing.T, ss store.Store) {
 			PerPage: 60,
 			Result:  []*model.Group{},
 		},
+		{
+			Name:    "Get group matching name",
+			TeamId:  team1.Id,
+			Opts:    model.GroupSearchOpts{Q: model.NewString(string([]rune(group1.Name)[5:8]))},
+			Page:    0,
+			PerPage: 100,
+			Result:  []*model.Group{group1},
+		},
+		{
+			Name:    "Get group matching display name",
+			TeamId:  team1.Id,
+			Opts:    model.GroupSearchOpts{Q: model.NewString("rouP-1")},
+			Page:    0,
+			PerPage: 100,
+			Result:  []*model.Group{group1},
+		},
+		{
+			Name:    "Get group matching multiple display names",
+			TeamId:  team1.Id,
+			Opts:    model.GroupSearchOpts{Q: model.NewString("roUp-")},
+			Page:    0,
+			PerPage: 100,
+			Result:  []*model.Group{group1, group2},
+		},
+		{
+			Name:    "Include member counts",
+			TeamId:  team1.Id,
+			Opts:    model.GroupSearchOpts{IncludeMemberCount: true},
+			Page:    0,
+			PerPage: 2,
+			Result:  []*model.Group{&group1WithMemberCount, &group2WithMemberCount},
+		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.Name, func(t *testing.T) {
-			res := <-ss.Group().GetGroupsByTeam(tc.TeamId, &tc.Page, &tc.PerPage, model.GroupSearchOpts{})
+			res := <-ss.Group().GetGroupsByTeam(tc.TeamId, &tc.Page, &tc.PerPage, tc.Opts)
 			require.Nil(t, res.Err)
-			require.ElementsMatch(t, tc.Result, res.Data.([]*model.Group))
+			groups := res.Data.([]*model.Group)
+			require.ElementsMatch(t, tc.Result, groups)
 		})
 	}
 }
